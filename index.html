@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#E8E9EF">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<title>Workout</title>
+<link rel="icon" href="icon-192.png">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+body{margin:0;background:#DDDEE6;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;color:#16171C;-webkit-tap-highlight-color:transparent}
+.app{max-width:420px;margin:0 auto;min-height:100vh;min-height:100dvh;display:flex;flex-direction:column;padding:24px 16px 20px;box-sizing:border-box;background:#E8E9EF}
+.card{background:#fff;border-radius:22px;padding:18px;box-sizing:border-box}
+.title{font-weight:800;font-size:17px;letter-spacing:-.01em}
+.h1{font-weight:800;font-size:26px;letter-spacing:-.01em}
+.sub{font-weight:400;font-size:13px;color:#9A9CA6}
+.big{font-weight:800;font-size:30px;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.big small{font-weight:400;font-size:15px;color:#B3B5BF;letter-spacing:0}
+.ghost{color:#C6C8D2}
+.ghost small{color:#D8DAE2}
+.pill{border-radius:999px;background:#16171C;color:#fff;font-weight:800;font-size:14px;padding:17px 22px;text-align:center;cursor:pointer;user-select:none}
+.pill:active{transform:scale(.985)}
+.gpill{border-radius:999px;background:#fff;color:#16171C;font-weight:800;font-size:13px;padding:13px 20px;text-align:center;cursor:pointer;user-select:none;flex:1}
+.chip{border-radius:999px;background:#EEE9FB;color:#6F58B8;font-weight:800;font-size:12px;padding:8px 14px;white-space:nowrap}
+.step{width:52px;height:52px;border-radius:999px;background:#F2F2F6;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:20px;cursor:pointer;user-select:none;flex-shrink:0}
+.step:active{background:#E4E4EC}
+.stepsm{width:38px;height:38px;font-size:16px}
+.rm{width:28px;height:28px;border-radius:999px;background:#F2F2F6;color:#9A9CA6;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:14px;cursor:pointer;user-select:none;flex-shrink:0}
+.rm:active{background:#E4E4EC}
+.row{display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid #F0F0F4}
+.row:last-child{border-bottom:0}
+.sethead{font-weight:800;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:#C0C2CC;padding-bottom:6px}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+.tab{font-weight:800;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:#C0C2CC;cursor:pointer;padding:6px 10px}
+.tabon{color:#16171C}
+.tabbar{display:flex;justify-content:space-around;padding-top:16px}
+.ring{transform:rotate(-90deg)}
+.ringwrap{position:relative;width:72px;height:72px;margin:0 auto}
+.ringnum{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:20px;font-variant-numeric:tabular-nums}
+.fx{display:flex;align-items:center}
+.jb{justify-content:space-between}
+.col{display:flex;flex-direction:column}
+.g10{gap:10px}.g12{gap:12px}
+.mt12{margin-top:12px}.mtauto{margin-top:auto;padding-top:16px}
+.hpad{padding:4px 6px 18px}
+.tc{text-align:center}
+.violet{color:#6F58B8}
+.linkbtn{font-weight:800;font-size:13px;color:#6F58B8;cursor:pointer;user-select:none}
+.grey{color:#9A9CA6}
+.setno{font-weight:800;font-size:12px;color:#6F58B8}
+.seg{display:flex;background:#DFE0E8;border-radius:999px;padding:4px;gap:4px}
+.segbtn{flex:1;text-align:center;font-weight:800;font-size:12px;padding:9px 0;border-radius:999px;color:#9A9CA6;cursor:pointer;user-select:none}
+.segon{background:#fff;color:#16171C}
+.stepseg{display:flex;justify-content:center;gap:6px;margin-top:14px}
+.stepopt{font-weight:800;font-size:11px;color:#C0C2CC;padding:6px 10px;border-radius:999px;cursor:pointer;user-select:none}
+.stepopt.on{background:#F2F2F6;color:#16171C}
+.scroll{overflow-y:auto;flex:1;min-height:0}
+</style>
+</head>
+<body>
+<div id="app" class="app"></div>
+<input type="file" id="importFile" accept=".json,application/json" hidden>
+<script>
+'use strict';
+
+const EX = [
+  { name: 'Hip Thrust', group: 'Glutes', groups: ['Glutes'] },
+  { name: 'Romanian Deadlift', group: 'Glutes · Back', groups: ['Glutes', 'Back'] },
+  { name: 'Lat Pulldown', group: 'Back', groups: ['Back'] },
+  { name: 'Seated Row', group: 'Back', groups: ['Back'] },
+  { name: 'Shoulder Press', group: 'Shoulders', groups: ['Shoulders'] },
+  { name: 'Lateral Raise', group: 'Shoulders', groups: ['Shoulders'] }
+];
+const GROUPS = ['Glutes', 'Back', 'Shoulders'];
+const GCOLORS = { Glutes: '#B9A5F2', Back: '#A9C46C', Shoulders: '#F2B9C6' };
+
+function load(k, fb) { try { const v = JSON.parse(localStorage.getItem(k)); return v == null ? fb : v; } catch (e) { return fb; } }
+
+let sessions = load('wt.sessions', []);
+let draft = load('wt.today', null) || {};
+draft = { sets: draft.sets || [], exIdx: draft.exIdx || 0, kg: draft.kg ?? null, reps: draft.reps ?? null, startedAt: draft.startedAt || null };
+let weightStep = load('wt.step', 2.5);
+let ui = { view: 'home', period: 'week', groupSel: 'Glutes', logIdx: null };
+
+function persist() {
+  localStorage.setItem('wt.sessions', JSON.stringify(sessions));
+  localStorage.setItem('wt.today', JSON.stringify(draft));
+  localStorage.setItem('wt.step', JSON.stringify(weightStep));
+}
+
+// ── helpers ──────────────────────────────────────────────
+const fmtVol = v => v >= 10000 ? (v / 1000).toFixed(1) + 'k' : v.toLocaleString('en-US');
+const fmtDate = t => { const d = new Date(t); return d.toLocaleDateString('en-US', { weekday: 'short' }) + ' · ' + d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); };
+const fmtShort = t => new Date(t).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+const vol = sets => sets.reduce((a, s) => a + s.kg * s.reps, 0);
+const exOf = name => EX.find(e => e.name === name);
+
+function lastSetsFor(name) {
+  for (let i = sessions.length - 1; i >= 0; i--) {
+    const hits = sessions[i].sets.filter(s => s.ex === name);
+    if (hits.length) return { sets: hits, date: sessions[i].date };
+  }
+  return null;
+}
+function defaultsFor(name) {
+  const last = lastSetsFor(name);
+  return { kg: last ? last.sets[0].kg : 20, reps: last ? last.sets[0].reps : 10 };
+}
+function currentKgReps() {
+  const d = defaultsFor(EX[draft.exIdx].name);
+  return { kg: draft.kg ?? d.kg, reps: draft.reps ?? d.reps };
+}
+function sessionGroups(sess) {
+  const gs = [];
+  sess.sets.forEach(s => (exOf(s.ex)?.groups || []).forEach(g => { if (!gs.includes(g)) gs.push(g); }));
+  return gs.join(' · ') || '—';
+}
+function switchEx(idx) {
+  idx = Math.max(0, Math.min(EX.length - 1, idx));
+  const t = draft.sets.filter(s => s.ex === EX[idx].name);
+  const lastToday = t[t.length - 1];
+  const d = defaultsFor(EX[idx].name);
+  draft.exIdx = idx;
+  draft.kg = lastToday ? lastToday.kg : d.kg;
+  draft.reps = lastToday ? lastToday.reps : d.reps;
+}
+
+// ── actions ──────────────────────────────────────────────
+const A = {
+  go(v) { ui.view = v; render(); },
+  setPeriod(p) { ui.period = p; render(); },
+  openLog(i) { ui.logIdx = i; ui.view = 'log'; render(); },
+  selectGroup(g) { ui.groupSel = g; render(); },
+  startWorkout() { switchEx(draft.exIdx); persist(); ui.view = 'workout'; render(); },
+  setStep(s) { weightStep = s; persist(); render(); },
+  kgStep(d) { const c = currentKgReps(); draft.kg = Math.max(0, Math.round((c.kg + d * weightStep) * 100) / 100); draft.reps = c.reps; persist(); render(); },
+  repsStep(d) { const c = currentKgReps(); draft.reps = Math.max(1, c.reps + d); draft.kg = c.kg; persist(); render(); },
+  copySet(kg, reps) { draft.kg = kg; draft.reps = reps; persist(); render(); },
+  logSet() {
+    const c = currentKgReps();
+    draft.sets.push({ ex: EX[draft.exIdx].name, kg: c.kg, reps: c.reps });
+    if (!draft.startedAt) draft.startedAt = Date.now();
+    persist(); render();
+  },
+  removeSet(i) {
+    const name = EX[draft.exIdx].name;
+    let seen = -1;
+    for (let j = 0; j < draft.sets.length; j++) {
+      if (draft.sets[j].ex === name) { seen++; if (seen === i) { draft.sets.splice(j, 1); break; } }
+    }
+    persist(); render();
+  },
+  prevEx() { switchEx(draft.exIdx - 1); persist(); render(); },
+  nextEx() { if (draft.exIdx >= EX.length - 1) return; switchEx(draft.exIdx + 1); persist(); render(); },
+  finish() {
+    if (draft.sets.length) {
+      sessions.push({ date: draft.startedAt || Date.now(), sets: draft.sets });
+      draft = { sets: [], exIdx: 0, kg: null, reps: null, startedAt: null };
+      persist();
+    }
+    ui.view = 'home'; render();
+  },
+  discard() {
+    if (draft.sets.length && !confirm('Discard this workout? ' + draft.sets.length + ' logged set(s) will be lost.')) return;
+    draft = { sets: [], exIdx: 0, kg: null, reps: null, startedAt: null };
+    persist(); ui.view = 'home'; render();
+  },
+  exportData() {
+    const blob = new Blob([JSON.stringify({ sessions }, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'workout-data-' + new Date().toISOString().slice(0, 10) + '.json';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  },
+  importData() { document.getElementById('importFile').click(); }
+};
+
+document.getElementById('importFile').addEventListener('change', function () {
+  const f = this.files[0]; this.value = '';
+  if (!f) return;
+  const rd = new FileReader();
+  rd.onload = () => {
+    let data;
+    try { data = JSON.parse(rd.result); } catch (e) { alert('Not a valid JSON file.'); return; }
+    const ok = data && Array.isArray(data.sessions) && data.sessions.every(s => s && typeof s.date === 'number' && Array.isArray(s.sets));
+    if (!ok) { alert('Not a valid workout export file.'); return; }
+    if (!confirm('Replace current data with ' + data.sessions.length + ' imported session(s)? Your current history will be overwritten.')) return;
+    sessions = data.sessions;
+    persist(); render();
+  };
+  rd.readAsText(f);
+});
+
+// ── views ────────────────────────────────────────────────
+function tabbar(active) {
+  return '<div class="tabbar">' + [['home', 'Home'], ['history', 'History'], ['groups', 'Groups']].map(([v, l]) =>
+    `<span class="tab ${v === active ? 'tabon' : ''}" onclick="A.go('${v}')">${l}</span>`).join('') + '</div>';
+}
+
+function viewHome() {
+  const isMonth = ui.period === 'month';
+  const since = Date.now() - (isMonth ? 28 : 7) * 864e5;
+  const ringMax = isMonth ? 80 : 20;
+  const pSessions = sessions.filter(s => s.date >= since);
+  const all = pSessions.flatMap(s => s.sets).concat(draft.sets);
+  const workouts = pSessions.length + (draft.sets.length ? 1 : 0);
+  const rings = GROUPS.map(g => {
+    const n = all.filter(s => exOf(s.ex)?.groups.includes(g)).length;
+    let lastSess = null;
+    for (let i = sessions.length - 1; i >= 0; i--) {
+      if (sessions[i].sets.some(s => exOf(s.ex)?.groups.includes(g))) { lastSess = sessions[i].date; break; }
+    }
+    const dash = Math.max(2, Math.min(1, n / ringMax) * 195).toFixed(0);
+    return `<div class="tc"><div class="ringwrap"><svg class="ring" width="72" height="72" viewBox="0 0 72 72"><circle cx="36" cy="36" r="31" fill="none" stroke="#F0F0F4" stroke-width="7"/><circle cx="36" cy="36" r="31" fill="none" stroke="${GCOLORS[g]}" stroke-width="7" stroke-linecap="round" stroke-dasharray="${dash} 195"/></svg><div class="ringnum">${n}</div></div><div class="sub" style="margin-top:8px;font-weight:800;color:#16171C">${g}</div><div class="sub">${lastSess ? 'last ' + new Date(lastSess).toLocaleDateString('en-US', { weekday: 'short' }) : 'not yet'}</div></div>`;
+  }).join('');
+  const recent = sessions.slice(-3).reverse().map(s => {
+    const i = sessions.indexOf(s);
+    return `<div class="row" onclick="A.openLog(${i})" style="cursor:pointer"><div><div class="title" style="font-size:15px">${fmtDate(s.date)}</div><div class="sub">${sessionGroups(s)}</div></div><span class="chip">${s.sets.length} sets</span></div>`;
+  }).join('') || '<div class="sub" style="padding:8px 0">No workouts yet.</div>';
+  return `
+  <div class="hpad fx jb"><div class="h1">${isMonth ? 'This month' : 'This week'}</div><div class="sub" style="font-weight:800">${fmtShort(Date.now())}</div></div>
+  <div class="seg"><div class="segbtn ${isMonth ? '' : 'segon'}" onclick="A.setPeriod('week')">Week</div><div class="segbtn ${isMonth ? 'segon' : ''}" onclick="A.setPeriod('month')">Month</div></div>
+  <div class="grid3" style="margin-top:12px">
+    <div class="card" style="padding:16px 12px"><div class="title" style="font-size:15px">Workouts</div><div class="big" style="margin-top:10px;font-size:26px">${workouts}</div><div class="sub" style="margin-top:2px">done</div></div>
+    <div class="card" style="padding:16px 12px"><div class="title" style="font-size:15px">Sets</div><div class="big" style="margin-top:10px;font-size:26px">${all.length}</div><div class="sub" style="margin-top:2px">logged</div></div>
+    <div class="card" style="padding:16px 12px"><div class="title" style="font-size:15px">Volume</div><div class="big" style="margin-top:10px;font-size:26px">${fmtVol(vol(all))} <small>kg</small></div><div class="sub" style="margin-top:2px">moved</div></div>
+  </div>
+  <div class="card mt12"><div class="title">Muscle groups</div><div class="fx" style="justify-content:space-around;margin-top:16px">${rings}</div></div>
+  <div class="card mt12"><div class="title" style="margin-bottom:6px">Recent</div>${recent}</div>
+  <div class="mtauto"><div class="pill" onclick="A.startWorkout()">${draft.sets.length ? 'Continue workout' : 'Start workout'}</div>${tabbar('home')}</div>`;
+}
+
+function viewWorkout() {
+  const ex = EX[draft.exIdx];
+  const c = currentKgReps();
+  const last = lastSetsFor(ex.name);
+  const todayForEx = draft.sets.filter(s => s.ex === ex.name);
+  const lastRows = last
+    ? last.sets.map(s => `<div class="row" onclick="A.copySet(${s.kg},${s.reps})" style="cursor:pointer"><span class="big ghost" style="font-size:19px">${s.kg} <small>kg</small></span><span class="sub">× ${s.reps}</span></div>`).join('')
+    : '<div class="sub" style="padding:8px 0">First time — no previous sets.</div>';
+  const todayRows = todayForEx.length
+    ? todayForEx.map((s, i) => `<div class="row"><span class="big" style="font-size:19px">${s.kg} <small>kg</small></span><span class="fx g12"><span class="sub" style="color:#16171C">× ${s.reps}</span><span class="setno">set ${i + 1}</span><span class="rm" onclick="A.removeSet(${i})">×</span></span></div>`).join('')
+    : '<div class="sub" style="padding:8px 0">Nothing logged yet.</div>';
+  const stepOpts = [1.25, 2.5, 5].map(s => `<span class="stepopt ${s === weightStep ? 'on' : ''}" onclick="A.setStep(${s})">±${s}</span>`).join('');
+  return `
+  <div class="fx jb" style="padding:0 6px"><span class="linkbtn" onclick="A.go('home')">‹ Home</span><span class="fx" style="gap:16px"><span class="linkbtn grey" onclick="A.discard()">Discard</span><span class="linkbtn" onclick="A.finish()">Finish</span></span></div>
+  <div class="hpad" style="padding-top:14px"><div class="h1">${ex.name}</div><div class="sub" style="margin-top:4px">${ex.group} · set ${todayForEx.length + 1} · exercise ${draft.exIdx + 1} of ${EX.length}</div></div>
+  <div class="card" style="padding:20px 18px">
+    <div class="fx jb">
+      <div class="step" onclick="A.kgStep(-1)">−</div>
+      <div class="tc"><div class="big" style="font-size:44px">${c.kg} <small>kg</small></div>
+      <div class="fx" style="gap:14px;justify-content:center;margin-top:10px"><div class="step stepsm" onclick="A.repsStep(-1)">−</div><div class="sub" style="color:#16171C;font-weight:800;font-size:15px;min-width:64px;text-align:center">× ${c.reps} reps</div><div class="step stepsm" onclick="A.repsStep(1)">+</div></div></div>
+      <div class="step" onclick="A.kgStep(1)">+</div>
+    </div>
+    <div class="stepseg">${stepOpts}</div>
+  </div>
+  <div class="card mt12"><div class="sethead">Last time · ${last ? fmtShort(last.date) : '—'}</div>${lastRows}</div>
+  <div class="card mt12"><div class="sethead violet">Today</div>${todayRows}</div>
+  <div class="mtauto col g10">
+    <div class="pill" onclick="A.logSet()">Log set ${todayForEx.length + 1} — ${c.kg} kg × ${c.reps}</div>
+    <div class="fx g12"><div class="gpill" onclick="A.prevEx()">‹ Prev</div><div class="gpill" onclick="A.nextEx()">${draft.exIdx >= EX.length - 1 ? 'Last one' : 'Next ›'}</div></div>
+  </div>`;
+}
+
+function viewHistory() {
+  const rows = sessions.slice().reverse().map(s => {
+    const i = sessions.indexOf(s);
+    return `<div class="row" onclick="A.openLog(${i})" style="cursor:pointer"><div><div class="title" style="font-size:15px">${fmtDate(s.date)}</div><div class="sub">${sessionGroups(s)} — ${fmtVol(vol(s.sets))} kg</div></div><span class="chip">${s.sets.length} sets</span></div>`;
+  }).join('') || '<div class="sub" style="padding:8px 0">No workouts yet.</div>';
+  return `
+  <div class="hpad fx jb"><div class="h1">History</div><span class="fx" style="gap:16px"><span class="linkbtn grey" onclick="A.importData()">Import</span><span class="linkbtn" onclick="A.exportData()">Export</span></span></div>
+  <div class="card scroll">${rows}</div>
+  <div class="mtauto">${tabbar('history')}</div>`;
+}
+
+function viewLog() {
+  const s = sessions[ui.logIdx];
+  if (!s) { ui.view = 'history'; return viewHistory(); }
+  const byEx = [];
+  const seen = {};
+  s.sets.forEach(x => {
+    if (!seen[x.ex]) { seen[x.ex] = { name: x.ex, group: exOf(x.ex)?.group || '', sets: [] }; byEx.push(seen[x.ex]); }
+    seen[x.ex].sets.push(x);
+  });
+  const cards = byEx.map(e => `<div class="card"><div class="fx jb"><span class="title" style="font-size:15px">${e.name}</span><span class="sub">${e.group}</span></div>` +
+    e.sets.map((x, i) => `<div class="row"><span class="big" style="font-size:19px">${x.kg} <small>kg</small></span><span class="fx g12"><span class="sub" style="color:#16171C">× ${x.reps}</span><span class="setno">set ${i + 1}</span></span></div>`).join('') + '</div>').join('');
+  return `
+  <div class="fx jb" style="padding:0 6px"><span class="linkbtn" onclick="A.go('history')">‹ History</span></div>
+  <div class="hpad" style="padding-top:14px"><div class="h1">${fmtDate(s.date)}</div><div class="sub" style="margin-top:4px">${sessionGroups(s)} · ${s.sets.length} sets · ${fmtVol(vol(s.sets))} kg</div></div>
+  <div class="col g12 scroll">${cards}</div>`;
+}
+
+function viewGroups() {
+  const tabs = GROUPS.map(g => `<div class="segbtn ${g === ui.groupSel ? 'segon' : ''}" onclick="A.selectGroup('${g}')">${g}</div>`).join('');
+  const cards = [];
+  EX.forEach(e => {
+    if (!e.groups.includes(ui.groupSel)) return;
+    const entries = [];
+    for (let i = sessions.length - 1; i >= 0 && entries.length < 4; i--) {
+      const hits = sessions[i].sets.filter(s => s.ex === e.name);
+      if (hits.length) entries.push(`<div class="row"><span class="sub" style="color:#16171C;font-weight:800">${fmtShort(sessions[i].date)}</span><span class="sub" style="font-variant-numeric:tabular-nums">${hits.map(s => s.kg + '×' + s.reps).join(' · ')} kg</span></div>`);
+    }
+    if (entries.length) cards.push(`<div class="card"><div class="title" style="font-size:15px">${e.name}</div>${entries.join('')}</div>`);
+  });
+  const body = cards.length ? cards.join('') : '<div class="card"><div class="sub" style="padding:4px 0">No sets for this group yet.</div></div>';
+  return `
+  <div class="hpad"><div class="h1">By group</div></div>
+  <div class="seg">${tabs}</div>
+  <div class="col g12 scroll" style="margin-top:12px">${body}</div>
+  <div class="mtauto">${tabbar('groups')}</div>`;
+}
+
+function render() {
+  const views = { home: viewHome, workout: viewWorkout, history: viewHistory, log: viewLog, groups: viewGroups };
+  document.getElementById('app').innerHTML = (views[ui.view] || viewHome)();
+}
+render();
+
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+  navigator.serviceWorker.register('./sw.js').catch(() => {});
+}
+</script>
+</body>
+</html>
