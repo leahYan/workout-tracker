@@ -55,6 +55,9 @@ body{margin:0;background:#DDDEE6;font-family:system-ui,-apple-system,'Segoe UI',
 .segbtn{flex:1;text-align:center;font-weight:800;font-size:12px;padding:9px 0;border-radius:999px;color:#9A9CA6;cursor:pointer;user-select:none}
 .segon{background:#fff;color:#16171C}
 .stepseg{display:flex;justify-content:center;gap:6px;margin-top:14px}
+.txt{width:100%;box-sizing:border-box;border:0;background:#F2F2F6;border-radius:14px;padding:14px 16px;font-size:16px;font-weight:800;font-family:inherit;color:#16171C;outline:none}
+.gtog{border-radius:999px;font-weight:800;font-size:13px;padding:10px 16px;cursor:pointer;user-select:none;background:#F2F2F6;color:#9A9CA6}
+.gtog.on{background:#EEE9FB;color:#6F58B8}
 .stepopt{font-weight:800;font-size:11px;color:#C0C2CC;padding:6px 10px;border-radius:999px;cursor:pointer;user-select:none}
 .stepopt.on{background:#F2F2F6;color:#16171C}
 .scroll{overflow-y:auto;flex:1;min-height:0}
@@ -66,32 +69,42 @@ body{margin:0;background:#DDDEE6;font-family:system-ui,-apple-system,'Segoe UI',
 <script>
 'use strict';
 
-const EX = [
-  { name: 'Hip Thrust', group: 'Glutes', groups: ['Glutes'] },
-  { name: 'Romanian Deadlift', group: 'Glutes · Back', groups: ['Glutes', 'Back'] },
-  { name: 'Lat Pulldown', group: 'Back', groups: ['Back'] },
-  { name: 'Seated Row', group: 'Back', groups: ['Back'] },
-  { name: 'Shoulder Press', group: 'Shoulders', groups: ['Shoulders'] },
-  { name: 'Lateral Raise', group: 'Shoulders', groups: ['Shoulders'] }
+const SEED_EX = [
+  { name: 'Hip Thrust', groups: ['Glutes'] },
+  { name: 'Romanian Deadlift', groups: ['Glutes', 'Back'] },
+  { name: 'Lat Pulldown', groups: ['Back'] },
+  { name: 'Seated Row', groups: ['Back'] },
+  { name: 'Shoulder Press', groups: ['Shoulders'] },
+  { name: 'Lateral Raise', groups: ['Shoulders'] }
 ];
 const GROUPS = ['Glutes', 'Back', 'Shoulders'];
 const GCOLORS = { Glutes: '#B9A5F2', Back: '#A9C46C', Shoulders: '#F2B9C6' };
 
 function load(k, fb) { try { const v = JSON.parse(localStorage.getItem(k)); return v == null ? fb : v; } catch (e) { return fb; } }
+function normEx(list) {
+  return list
+    .filter(e => e && typeof e.name === 'string' && Array.isArray(e.groups))
+    .map(e => { const gs = GROUPS.filter(g => e.groups.includes(g)); return { name: e.name, groups: gs.length ? gs : [GROUPS[0]], group: (gs.length ? gs : [GROUPS[0]]).join(' · ') }; });
+}
 
 let sessions = load('wt.sessions', []);
+let EX = normEx(load('wt.exercises', SEED_EX));
+if (!EX.length) EX = normEx(SEED_EX);
 let draft = load('wt.today', null) || {};
 draft = { sets: draft.sets || [], exIdx: draft.exIdx || 0, kg: draft.kg ?? null, reps: draft.reps ?? null, startedAt: draft.startedAt || null };
+if (draft.exIdx >= EX.length) draft.exIdx = 0;
 let weightStep = load('wt.step', 2.5);
-let ui = { view: 'home', period: 'week', groupSel: 'Glutes', logIdx: null };
+let ui = { view: 'home', period: 'week', groupSel: 'Glutes', logIdx: null, editing: null };
 
 function persist() {
   localStorage.setItem('wt.sessions', JSON.stringify(sessions));
+  localStorage.setItem('wt.exercises', JSON.stringify(EX.map(e => ({ name: e.name, groups: e.groups }))));
   localStorage.setItem('wt.today', JSON.stringify(draft));
   localStorage.setItem('wt.step', JSON.stringify(weightStep));
 }
 
 // ── helpers ──────────────────────────────────────────────
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmtVol = v => v >= 10000 ? (v / 1000).toFixed(1) + 'k' : v.toLocaleString('en-US');
 const fmtDate = t => { const d = new Date(t); return d.toLocaleDateString('en-US', { weekday: 'short' }) + ' · ' + d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); };
 const fmtShort = t => new Date(t).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
@@ -168,8 +181,57 @@ const A = {
     draft = { sets: [], exIdx: 0, kg: null, reps: null, startedAt: null };
     persist(); ui.view = 'home'; render();
   },
+  openExercises() { ui.view = 'exercises'; render(); },
+  openExEdit(i) {
+    ui.editing = (i == null || i < 0)
+      ? { idx: -1, nameDraft: '', groups: [GROUPS[0]] }
+      : { idx: i, nameDraft: EX[i].name, groups: EX[i].groups.slice() };
+    ui.view = 'exedit'; render();
+    const inp = document.getElementById('exName');
+    if (inp && ui.editing.idx < 0) inp.focus();
+  },
+  toggleGroup(g) {
+    const ed = ui.editing;
+    ed.nameDraft = document.getElementById('exName').value;
+    if (ed.groups.includes(g)) {
+      if (ed.groups.length > 1) ed.groups = ed.groups.filter(x => x !== g);
+    } else {
+      if (ed.groups.length >= 2) ed.groups.shift();
+      ed.groups.push(g);
+    }
+    render();
+  },
+  saveExercise() {
+    const ed = ui.editing;
+    const name = document.getElementById('exName').value.trim();
+    if (!name) { alert('Give the exercise a name.'); return; }
+    if (EX.some((e, j) => j !== ed.idx && e.name.toLowerCase() === name.toLowerCase())) { alert('An exercise with that name already exists.'); return; }
+    const groups = GROUPS.filter(g => ed.groups.includes(g));
+    if (ed.idx < 0) {
+      EX.push({ name, groups, group: groups.join(' · ') });
+    } else {
+      const old = EX[ed.idx].name;
+      EX[ed.idx] = { name, groups, group: groups.join(' · ') };
+      if (old !== name) {
+        // rename follows through history so "last time" lookups keep working
+        sessions.forEach(s => s.sets.forEach(x => { if (x.ex === old) x.ex = name; }));
+        draft.sets.forEach(x => { if (x.ex === old) x.ex = name; });
+      }
+    }
+    ui.editing = null; persist(); ui.view = 'exercises'; render();
+  },
+  deleteExercise() {
+    const ed = ui.editing;
+    if (EX.length <= 1) { alert('You need at least one exercise in the list.'); return; }
+    const name = EX[ed.idx].name;
+    const logged = sessions.reduce((a, s) => a + s.sets.filter(x => x.ex === name).length, 0);
+    if (!confirm('Remove "' + name + '" from your exercise list?' + (logged ? ' Past workouts keep their ' + logged + ' logged set(s).' : ''))) return;
+    EX.splice(ed.idx, 1);
+    if (draft.exIdx >= EX.length) draft.exIdx = EX.length - 1;
+    ui.editing = null; persist(); ui.view = 'exercises'; render();
+  },
   exportData() {
-    const blob = new Blob([JSON.stringify({ sessions }, null, 2)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify({ sessions, exercises: EX.map(e => ({ name: e.name, groups: e.groups })) }, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = 'workout-data-' + new Date().toISOString().slice(0, 10) + '.json';
@@ -190,6 +252,10 @@ document.getElementById('importFile').addEventListener('change', function () {
     if (!ok) { alert('Not a valid workout export file.'); return; }
     if (!confirm('Replace current data with ' + data.sessions.length + ' imported session(s)? Your current history will be overwritten.')) return;
     sessions = data.sessions;
+    if (Array.isArray(data.exercises)) {
+      const imported = normEx(data.exercises);
+      if (imported.length) { EX = imported; draft.exIdx = 0; }
+    }
     persist(); render();
   };
   rd.readAsText(f);
@@ -248,7 +314,7 @@ function viewWorkout() {
   const stepOpts = [1.25, 2.5, 5].map(s => `<span class="stepopt ${s === weightStep ? 'on' : ''}" onclick="A.setStep(${s})">±${s}</span>`).join('');
   return `
   <div class="fx jb" style="padding:0 6px"><span class="linkbtn" onclick="A.go('home')">‹ Home</span><span class="fx" style="gap:16px"><span class="linkbtn grey" onclick="A.discard()">Discard</span><span class="linkbtn" onclick="A.finish()">Finish</span></span></div>
-  <div class="hpad" style="padding-top:14px"><div class="h1">${ex.name}</div><div class="sub" style="margin-top:4px">${ex.group} · set ${todayForEx.length + 1} · exercise ${draft.exIdx + 1} of ${EX.length}</div></div>
+  <div class="hpad" style="padding-top:14px"><div class="h1">${esc(ex.name)}</div><div class="sub" style="margin-top:4px">${esc(ex.group)} · set ${todayForEx.length + 1} · exercise ${draft.exIdx + 1} of ${EX.length}</div></div>
   <div class="card" style="padding:20px 18px">
     <div class="fx jb">
       <div class="step" onclick="A.kgStep(-1)">−</div>
@@ -286,7 +352,7 @@ function viewLog() {
     if (!seen[x.ex]) { seen[x.ex] = { name: x.ex, group: exOf(x.ex)?.group || '', sets: [] }; byEx.push(seen[x.ex]); }
     seen[x.ex].sets.push(x);
   });
-  const cards = byEx.map(e => `<div class="card"><div class="fx jb"><span class="title" style="font-size:15px">${e.name}</span><span class="sub">${e.group}</span></div>` +
+  const cards = byEx.map(e => `<div class="card"><div class="fx jb"><span class="title" style="font-size:15px">${esc(e.name)}</span><span class="sub">${esc(e.group)}</span></div>` +
     e.sets.map((x, i) => `<div class="row"><span class="big" style="font-size:19px">${x.kg} <small>kg</small></span><span class="fx g12"><span class="sub" style="color:#16171C">× ${x.reps}</span><span class="setno">set ${i + 1}</span></span></div>`).join('') + '</div>').join('');
   return `
   <div class="fx jb" style="padding:0 6px"><span class="linkbtn" onclick="A.go('history')">‹ History</span></div>
@@ -304,18 +370,42 @@ function viewGroups() {
       const hits = sessions[i].sets.filter(s => s.ex === e.name);
       if (hits.length) entries.push(`<div class="row"><span class="sub" style="color:#16171C;font-weight:800">${fmtShort(sessions[i].date)}</span><span class="sub" style="font-variant-numeric:tabular-nums">${hits.map(s => s.kg + '×' + s.reps).join(' · ')} kg</span></div>`);
     }
-    if (entries.length) cards.push(`<div class="card"><div class="title" style="font-size:15px">${e.name}</div>${entries.join('')}</div>`);
+    if (entries.length) cards.push(`<div class="card"><div class="title" style="font-size:15px">${esc(e.name)}</div>${entries.join('')}</div>`);
   });
   const body = cards.length ? cards.join('') : '<div class="card"><div class="sub" style="padding:4px 0">No sets for this group yet.</div></div>';
   return `
-  <div class="hpad"><div class="h1">By group</div></div>
+  <div class="hpad fx jb"><div class="h1">By group</div><span class="linkbtn" onclick="A.openExercises()">Edit exercises</span></div>
   <div class="seg">${tabs}</div>
   <div class="col g12 scroll" style="margin-top:12px">${body}</div>
   <div class="mtauto">${tabbar('groups')}</div>`;
 }
 
+function viewExercises() {
+  const rows = EX.map((e, i) =>
+    `<div class="row" onclick="A.openExEdit(${i})" style="cursor:pointer"><div><div class="title" style="font-size:15px">${esc(e.name)}</div><div class="sub">${esc(e.group)}</div></div><span class="sub" style="font-weight:800">›</span></div>`).join('');
+  return `
+  <div class="fx jb" style="padding:0 6px"><span class="linkbtn" onclick="A.go('groups')">‹ Groups</span></div>
+  <div class="hpad" style="padding-top:14px"><div class="h1">Exercises</div><div class="sub" style="margin-top:4px">Tap one to edit · order is workout order</div></div>
+  <div class="card scroll">${rows}</div>
+  <div class="mtauto"><div class="pill" onclick="A.openExEdit(-1)">Add exercise</div></div>`;
+}
+
+function viewExEdit() {
+  const ed = ui.editing;
+  if (!ed) { ui.view = 'exercises'; return viewExercises(); }
+  const isNew = ed.idx < 0;
+  const chips = GROUPS.map(g => `<span class="gtog ${ed.groups.includes(g) ? 'on' : ''}" onclick="A.toggleGroup('${g}')">${g}</span>`).join('');
+  const del = isNew ? '' : `<div class="tc" style="margin-top:12px"><span class="linkbtn grey" onclick="A.deleteExercise()">Delete exercise</span></div>`;
+  return `
+  <div class="fx jb" style="padding:0 6px"><span class="linkbtn" onclick="A.openExercises()">‹ Exercises</span></div>
+  <div class="hpad" style="padding-top:14px"><div class="h1">${isNew ? 'Add exercise' : 'Edit exercise'}</div></div>
+  <div class="card"><div class="sethead">Name</div><input id="exName" class="txt" type="text" value="${esc(ed.nameDraft)}" placeholder="e.g. Bulgarian Split Squat" autocomplete="off"></div>
+  <div class="card mt12"><div class="sethead">Muscle groups · pick 1–2</div><div class="fx" style="gap:8px;flex-wrap:wrap;padding-top:4px">${chips}</div></div>
+  <div class="mtauto col g10"><div class="pill" onclick="A.saveExercise()">${isNew ? 'Add exercise' : 'Save changes'}</div>${del}</div>`;
+}
+
 function render() {
-  const views = { home: viewHome, workout: viewWorkout, history: viewHistory, log: viewLog, groups: viewGroups };
+  const views = { home: viewHome, workout: viewWorkout, history: viewHistory, log: viewLog, groups: viewGroups, exercises: viewExercises, exedit: viewExEdit };
   document.getElementById('app').innerHTML = (views[ui.view] || viewHome)();
 }
 render();
