@@ -50,6 +50,7 @@ body{margin:0;background:#DDDEE6;font-family:system-ui,-apple-system,'Segoe UI',
 .violet{color:#6F58B8}
 .linkbtn{font-weight:800;font-size:13px;color:#6F58B8;cursor:pointer;user-select:none}
 .grey{color:#9A9CA6}
+.danger{color:#D9534F}
 .setno{font-weight:800;font-size:12px;color:#6F58B8}
 .seg{display:flex;background:#DFE0E8;border-radius:999px;padding:4px;gap:4px}
 .segbtn{flex:1;text-align:center;font-weight:800;font-size:12px;padding:9px 0;border-radius:999px;color:#9A9CA6;cursor:pointer;user-select:none}
@@ -238,7 +239,21 @@ const A = {
     a.click();
     URL.revokeObjectURL(a.href);
   },
-  importData() { document.getElementById('importFile').click(); }
+  importData() { document.getElementById('importFile').click(); },
+  deleteSession() {
+    const s = sessions[ui.logIdx];
+    if (!s) return;
+    if (!confirm('Delete the workout from ' + fmtDate(s.date) + ' (' + s.sets.length + ' sets)? This cannot be undone.')) return;
+    sessions.splice(ui.logIdx, 1);
+    ui.logIdx = null; persist(); ui.view = 'history'; render();
+  },
+  deleteAllHistory() {
+    if (!sessions.length) { alert('No history to delete.'); return; }
+    if (!confirm('Delete ALL history (' + sessions.length + ' workouts)? Consider Export first — this cannot be undone.')) return;
+    if (!confirm('Really delete everything? Last chance.')) return;
+    sessions = [];
+    persist(); render();
+  }
 };
 
 document.getElementById('importFile').addEventListener('change', function () {
@@ -340,6 +355,7 @@ function viewHistory() {
   return `
   <div class="hpad fx jb"><div class="h1">History</div><span class="fx" style="gap:16px"><span class="linkbtn grey" onclick="A.importData()">Import</span><span class="linkbtn" onclick="A.exportData()">Export</span></span></div>
   <div class="card scroll">${rows}</div>
+  ${sessions.length ? '<div class="tc" style="padding-top:14px"><span class="linkbtn grey" onclick="A.deleteAllHistory()">Delete all history</span></div>' : ''}
   <div class="mtauto">${tabbar('history')}</div>`;
 }
 
@@ -355,7 +371,7 @@ function viewLog() {
   const cards = byEx.map(e => `<div class="card"><div class="fx jb"><span class="title" style="font-size:15px">${esc(e.name)}</span><span class="sub">${esc(e.group)}</span></div>` +
     e.sets.map((x, i) => `<div class="row"><span class="big" style="font-size:19px">${x.kg} <small>kg</small></span><span class="fx g12"><span class="sub" style="color:#16171C">× ${x.reps}</span><span class="setno">set ${i + 1}</span></span></div>`).join('') + '</div>').join('');
   return `
-  <div class="fx jb" style="padding:0 6px"><span class="linkbtn" onclick="A.go('history')">‹ History</span></div>
+  <div class="fx jb" style="padding:0 6px"><span class="linkbtn" onclick="A.go('history')">‹ History</span><span class="linkbtn danger" onclick="A.deleteSession()">Delete</span></div>
   <div class="hpad" style="padding-top:14px"><div class="h1">${fmtDate(s.date)}</div><div class="sub" style="margin-top:4px">${sessionGroups(s)} · ${s.sets.length} sets · ${fmtVol(vol(s.sets))} kg</div></div>
   <div class="col g12 scroll">${cards}</div>`;
 }
