@@ -104,9 +104,10 @@ let tombs = load('wt.tombs', []);
 let sync = load('wt.sync', null) || {};
 sync = { url: sync.url || '', key: sync.key || '', last: sync.last || 0 };
 let draft = load('wt.today', null) || {};
-draft = { sets: draft.sets || [], exIdx: draft.exIdx || 0, kg: draft.kg ?? null, reps: draft.reps ?? null, startedAt: draft.startedAt || null };
+draft = { sets: draft.sets || [], exIdx: draft.exIdx || 0, kg: draft.kg ?? null, reps: draft.reps ?? null, startedAt: draft.startedAt || null, restUntil: draft.restUntil || null };
 if (draft.exIdx >= EX.length) draft.exIdx = 0;
 let weightStep = load('wt.step', 2.5);
+let restSec = load('wt.rest', 90); // 0 = timer off
 let ui = { view: 'home', period: 'week', groupSel: 'Glutes', logIdx: null, editing: null, showKey: false, syncBusy: false, progMetric: 'vol', progSel: null };
 
 function persist() {
@@ -117,6 +118,47 @@ function persist() {
   localStorage.setItem('wt.sync', JSON.stringify(sync));
   localStorage.setItem('wt.today', JSON.stringify(draft));
   localStorage.setItem('wt.step', JSON.stringify(weightStep));
+  localStorage.setItem('wt.rest', JSON.stringify(restSec));
+}
+
+// ── rest timer ───────────────────────────────────────────
+let restTimer = null, restNotified = false, audioCtx = null;
+function primeAudio() { // must be called from a user gesture so the beep is allowed later
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+  } catch (e) {}
+}
+function beep() {
+  try {
+    if (!audioCtx) return;
+    [0, .3, .6].forEach(t => {
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+      o.connect(g); g.connect(audioCtx.destination);
+      o.frequency.value = 880;
+      g.gain.setValueAtTime(.22, audioCtx.currentTime + t);
+      g.gain.exponentialRampToValueAtTime(.001, audioCtx.currentTime + t + .22);
+      o.start(audioCtx.currentTime + t); o.stop(audioCtx.currentTime + t + .25);
+    });
+  } catch (e) {}
+}
+const fmtT = ms => { const s = Math.max(0, Math.ceil(ms / 1000)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+function startRestTicker() {
+  if (restTimer) return;
+  restTimer = setInterval(() => {
+    if (!draft.restUntil) { clearInterval(restTimer); restTimer = null; return; }
+    const left = draft.restUntil - Date.now();
+    if (left <= 0 && !restNotified) {
+      restNotified = true;
+      try { if (navigator.vibrate) navigator.vibrate([250, 120, 250]); } catch (e) {}
+      beep();
+    }
+    if (left <= -60000) { // auto-dismiss the "go" banner after a minute
+      draft.restUntil = null; restNotified = false; persist();
+      clearInterval(restTimer); restTimer = null;
+    }
+    if (ui.view === 'workout') render();
+  }, 500);
 }
 
 // ── helpers ──────────────────────────────────────────────
@@ -241,8 +283,16 @@ const A = {
     const c = currentKgReps();
     draft.sets.push({ ex: EX[draft.exIdx].name, kg: c.kg, reps: c.reps });
     if (!draft.startedAt) draft.startedAt = Date.now();
+    if (restSec > 0) {
+      primeAudio();
+      draft.restUntil = Date.now() + restSec * 1000;
+      restNotified = false;
+      startRestTicker();
+    }
     persist(); render();
   },
+  skipRest() { draft.restUntil = null; restNotified = false; persist(); render(); },
+  restStep(d) { restSec = Math.max(0, Math.min(600, restSec + d * 15)); persist(); render(); },
   removeSet(i) {
     const name = EX[draft.exIdx].name;
     let seen = -1;
@@ -257,14 +307,14 @@ const A = {
     if (draft.sets.length) {
       const now = Date.now();
       sessions.push({ id: now + '-' + Math.random().toString(36).slice(2, 8), date: draft.startedAt || now, mt: now, sets: draft.sets });
-      draft = { sets: [], exIdx: 0, kg: null, reps: null, startedAt: null };
+      draft = { sets: [], exIdx: 0, kg: null, reps: null, startedAt: null, restUntil: null };
       persist(); syncSoon();
     }
     ui.view = 'home'; render();
   },
   discard() {
     if (draft.sets.length && !confirm('Discard this workout? ' + draft.sets.length + ' logged set(s) will be lost.')) return;
-    draft = { sets: [], exIdx: 0, kg: null, reps: null, startedAt: null };
+    draft = { sets: [], exIdx: 0, kg: null, reps: null, startedAt: null, restUntil: null };
     persist(); ui.view = 'home'; render();
   },
   openExercises() { ui.view = 'exercises'; render(); },
@@ -505,6 +555,24 @@ function viewProgress() {
   <div class="mtauto">${tabbar('progress')}</div>`;
 }
 
+function viewSettings() {
+  const restLabel = restSec > 0 ? fmtT(restSec * 1000) : 'Off';
+  return `
+  <div class="fx jb" style="padding:0 6px"><span class="linkbtn" onclick="A.go('home')">‹ Home</span></div>
+  <div class="hpad" style="padding-top:14px"><div class="h1">Settings</div></div>
+  <div class="card">
+    <div class="sethead">Rest timer</div>
+    <div class="sub" style="padding:2px 0 12px">Starts when you log a set, then reminds you (vibration + beep) to start the next one. Works while the app is open on screen.</div>
+    <div class="fx jb">
+      <div class="step" onclick="A.restStep(-1)">−</div>
+      <div class="big" style="font-size:34px">${restLabel} ${restSec > 0 ? '<small>min</small>' : ''}</div>
+      <div class="step" onclick="A.restStep(1)">+</div>
+    </div>
+    <div class="sub tc" style="margin-top:10px">15-second steps · set to 0:00 to turn off</div>
+  </div>
+  <div class="mtauto">${tabbar('home')}</div>`;
+}
+
 function viewSync() {
   const urlCard = `<div class="card"><div class="sethead">Server URL</div><input id="syncUrl" class="txt" type="url" value="${esc(sync.url)}" placeholder="https://sync.your-domain.com" autocomplete="off"></div>`;
   if (!sync.key) {
@@ -548,7 +616,7 @@ function viewHome() {
     return `<div class="row" onclick="A.openLog(${i})" style="cursor:pointer"><div><div class="title" style="font-size:15px">${fmtDate(s.date)}</div><div class="sub">${sessionGroups(s)}</div></div><span class="chip">${s.sets.length} sets</span></div>`;
   }).join('') || '<div class="sub" style="padding:8px 0">No workouts yet.</div>';
   return `
-  <div class="hpad fx jb"><div class="h1">${isMonth ? 'This month' : 'This week'}</div><div class="sub" style="font-weight:800">${fmtShort(Date.now())}</div></div>
+  <div class="hpad fx jb"><div class="h1">${isMonth ? 'This month' : 'This week'}</div><div class="tc"><div class="sub" style="font-weight:800">${fmtShort(Date.now())}</div><span class="linkbtn grey" style="font-size:11px" onclick="A.go('settings')">Settings</span></div></div>
   <div class="seg"><div class="segbtn ${isMonth ? '' : 'segon'}" onclick="A.setPeriod('week')">Week</div><div class="segbtn ${isMonth ? 'segon' : ''}" onclick="A.setPeriod('month')">Month</div></div>
   <div class="grid3" style="margin-top:12px">
     <div class="card" style="padding:16px 12px"><div class="title" style="font-size:15px">Workouts</div><div class="big" style="margin-top:10px;font-size:26px">${workouts}</div><div class="sub" style="margin-top:2px">done</div></div>
@@ -558,6 +626,15 @@ function viewHome() {
   <div class="card mt12"><div class="title">Muscle groups</div><div class="fx" style="justify-content:space-around;margin-top:16px">${rings}</div></div>
   <div class="card mt12"><div class="title" style="margin-bottom:6px">Recent</div>${recent}</div>
   <div class="mtauto"><div class="pill" onclick="A.startWorkout()">${draft.sets.length ? 'Continue workout' : 'Start workout'}</div>${tabbar('home')}</div>`;
+}
+
+function restCard() {
+  if (!draft.restUntil) return '';
+  const left = draft.restUntil - Date.now();
+  if (left > 0) {
+    return `<div class="card mt12 fx jb" style="padding:14px 18px"><span class="sethead" style="padding:0">Rest</span><span class="big" style="font-size:22px">${fmtT(left)}</span><span class="linkbtn grey" onclick="A.skipRest()">Skip</span></div>`;
+  }
+  return `<div class="card mt12 fx jb" style="padding:14px 18px;background:#6F58B8"><span style="color:#fff;font-weight:800;font-size:15px">Rest over — go!</span><span class="linkbtn" style="color:#fff" onclick="A.skipRest()">Dismiss</span></div>`;
 }
 
 function viewWorkout() {
@@ -584,6 +661,7 @@ function viewWorkout() {
     </div>
     <div class="stepseg">${stepOpts}</div>
   </div>
+  ${restCard()}
   <div class="card mt12"><div class="sethead">Last time · ${last ? fmtShort(last.date) : '—'}</div>${lastRows}</div>
   <div class="card mt12"><div class="sethead violet">Today</div>${todayRows}</div>
   <div class="mtauto col g10">
@@ -666,11 +744,12 @@ function viewExEdit() {
 }
 
 function render() {
-  const views = { home: viewHome, workout: viewWorkout, history: viewHistory, log: viewLog, groups: viewGroups, exercises: viewExercises, exedit: viewExEdit, sync: viewSync, progress: viewProgress };
+  const views = { home: viewHome, workout: viewWorkout, history: viewHistory, log: viewLog, groups: viewGroups, exercises: viewExercises, exedit: viewExEdit, sync: viewSync, progress: viewProgress, settings: viewSettings };
   document.getElementById('app').innerHTML = (views[ui.view] || viewHome)();
 }
 render();
 if (sync.url && sync.key) doSync(false);
+if (draft.restUntil) { restNotified = draft.restUntil <= Date.now(); startRestTicker(); }
 
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   navigator.serviceWorker.register('./sw.js').catch(() => {});
