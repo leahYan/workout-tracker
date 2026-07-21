@@ -107,7 +107,7 @@ let draft = load('wt.today', null) || {};
 draft = { sets: draft.sets || [], exIdx: draft.exIdx || 0, kg: draft.kg ?? null, reps: draft.reps ?? null, startedAt: draft.startedAt || null };
 if (draft.exIdx >= EX.length) draft.exIdx = 0;
 let weightStep = load('wt.step', 2.5);
-let ui = { view: 'home', period: 'week', groupSel: 'Glutes', logIdx: null, editing: null, showKey: false, syncBusy: false };
+let ui = { view: 'home', period: 'week', groupSel: 'Glutes', logIdx: null, editing: null, showKey: false, syncBusy: false, progMetric: 'vol', progSel: null };
 
 function persist() {
   localStorage.setItem('wt.sessions', JSON.stringify(sessions));
@@ -372,6 +372,8 @@ const A = {
     persist(); render();
     doSync(true);
   },
+  progMetric(m) { ui.progMetric = m; ui.progSel = null; render(); },
+  progPick(i) { ui.progSel = ui.progSel === i ? null : i; render(); },
   toggleKey() { ui.showKey = !ui.showKey; render(); },
   copyKey() {
     const done = () => alert('Sync key copied. Store it somewhere safe — it is the only way to access your synced data.');
@@ -407,8 +409,100 @@ document.getElementById('importFile').addEventListener('change', function () {
 
 // ── views ────────────────────────────────────────────────
 function tabbar(active) {
-  return '<div class="tabbar">' + [['home', 'Home'], ['history', 'History'], ['groups', 'Groups'], ['sync', 'Sync']].map(([v, l]) =>
+  return '<div class="tabbar">' + [['home', 'Home'], ['history', 'History'], ['groups', 'Groups'], ['progress', 'Progress'], ['sync', 'Sync']].map(([v, l]) =>
     `<span class="tab ${v === active ? 'tabon' : ''}" onclick="A.go('${v}')">${l}</span>`).join('') + '</div>';
+}
+
+// ── progress (last 6 months) ─────────────────────────────
+const WEEK_MS = 7 * 864e5;
+function weekStart(t) { const d = new Date(t); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - (d.getDay() + 6) % 7); return d.getTime(); }
+function progressWeeks() {
+  const N = 26;
+  const start = weekStart(Date.now()) - (N - 1) * WEEK_MS;
+  const weeks = Array.from({ length: N }, (_, i) => ({ t: start + i * WEEK_MS, vol: 0, sets: 0, workouts: 0 }));
+  sessions.forEach(s => {
+    const i = Math.round((weekStart(s.date) - start) / WEEK_MS);
+    if (i < 0 || i >= N) return;
+    weeks[i].workouts++; weeks[i].sets += s.sets.length; weeks[i].vol += vol(s.sets);
+  });
+  return weeks;
+}
+function rangeStats(from, to) {
+  const ss = sessions.filter(s => s.date >= from && s.date < to);
+  const sets = ss.flatMap(s => s.sets);
+  return { workouts: ss.length, sets: sets.length, vol: vol(sets), heaviest: sets.reduce((a, s) => Math.max(a, s.kg), 0) };
+}
+function fmtDelta(cur, prev) {
+  if (!prev) return cur ? 'new' : '—';
+  const p = Math.round((cur - prev) / prev * 100);
+  return (p > 0 ? '+' : p < 0 ? '−' : '±') + Math.abs(p) + '%';
+}
+
+function viewProgress() {
+  if (!sessions.length) {
+    return `
+  <div class="hpad"><div class="h1">Progress</div><div class="sub" style="margin-top:4px">Last 6 months</div></div>
+  <div class="card"><div class="sub" style="padding:8px 0">No workouts yet — your progress will appear here after your first session.</div></div>
+  <div class="mtauto">${tabbar('progress')}</div>`;
+  }
+  const weeks = progressWeeks();
+  const metric = ui.progMetric;
+  const vals = weeks.map(w => w[metric]);
+  const maxV = Math.max(...vals, 1);
+  const fmtV = v => metric === 'vol' ? fmtVol(v) : String(v);
+  const unit = metric === 'vol' ? ' kg' : '';
+  // chart geometry: recessive grid, thin rounded bars, tap-to-inspect
+  const CW = 352, CH = 168, TOP = 16, BOT = 24, PH = CH - TOP - BOT, slot = CW / weeks.length, bw = Math.min(9, slot - 4);
+  let svg = '';
+  [0, 0.5, 1].forEach(f => {
+    const y = TOP + PH - f * PH;
+    svg += `<line x1="0" y1="${y}" x2="${CW}" y2="${y}" stroke="#F0F0F4" stroke-width="1"/>`;
+    if (f > 0) svg += `<text x="0" y="${y - 4}" font-size="9" font-weight="800" fill="#C0C2CC">${fmtV(Math.round(maxV * f))}</text>`;
+  });
+  let lastMonth = -1;
+  weeks.forEach((w, i) => {
+    const m = new Date(w.t).getMonth();
+    if (m !== lastMonth) {
+      lastMonth = m;
+      if (i > 0) svg += `<text x="${i * slot + slot / 2}" y="${CH - 8}" font-size="9" font-weight="800" fill="#C0C2CC" text-anchor="middle">${new Date(w.t).toLocaleDateString('en-US', { month: 'short' }).toUpperCase()}</text>`;
+    }
+    const h = vals[i] / maxV * PH;
+    const x = i * slot + (slot - bw) / 2, y = TOP + PH - h;
+    if (vals[i] > 0) {
+      const r = Math.min(4, bw / 2, h / 2);
+      svg += `<path d="M${x} ${TOP + PH} v${-(h - r)} q0 ${-r} ${r} ${-r} h${bw - 2 * r} q${r} 0 ${r} ${r} v${h - r} z" fill="${ui.progSel === i ? '#4A3A85' : '#6F58B8'}"/>`;
+    } else {
+      svg += `<rect x="${x}" y="${TOP + PH - 2}" width="${bw}" height="2" rx="1" fill="#E4E4EC"/>`;
+    }
+    svg += `<rect x="${i * slot}" y="0" width="${slot}" height="${CH - BOT}" fill="transparent" onclick="A.progPick(${i})" style="cursor:pointer"/>`;
+    if (ui.progSel === i && vals[i] > 0) {
+      svg += `<text x="${Math.min(Math.max(x + bw / 2, 16), CW - 16)}" y="${Math.max(y - 5, 10)}" font-size="10" font-weight="800" fill="#16171C" text-anchor="middle">${fmtV(vals[i])}</text>`;
+    }
+  });
+  const sel = ui.progSel;
+  const caption = sel != null
+    ? `Week of ${fmtShort(weeks[sel].t)} — ${fmtVol(weeks[sel].vol)} kg · ${weeks[sel].sets} sets · ${weeks[sel].workouts} workout${weeks[sel].workouts === 1 ? '' : 's'}`
+    : 'Tap a bar for that week’s details';
+  const segs = [['vol', 'Volume'], ['sets', 'Sets'], ['workouts', 'Workouts']].map(([m, l]) =>
+    `<div class="segbtn ${metric === m ? 'segon' : ''}" onclick="A.progMetric('${m}')">${l}</div>`).join('');
+  // last 13 weeks vs the 13 before
+  const curFrom = weekStart(Date.now()) - 12 * WEEK_MS;
+  const cur = rangeStats(curFrom, Infinity), prev = rangeStats(curFrom - 13 * WEEK_MS, curFrom);
+  const dcap = (c, p) => `<span style="color:#16171C;font-weight:800">${fmtDelta(c, p)}</span> vs prior 3 mo`;
+  return `
+  <div class="hpad"><div class="h1">Progress</div><div class="sub" style="margin-top:4px">Last 6 months · weekly</div></div>
+  <div class="seg">${segs}</div>
+  <div class="card mt12" style="padding:16px 14px 12px">
+    <svg viewBox="0 0 ${CW} ${CH}" width="100%" style="display:block;font-variant-numeric:tabular-nums">${svg}</svg>
+    <div class="sub" style="margin-top:6px;font-variant-numeric:tabular-nums">${caption}</div>
+  </div>
+  <div class="grid2 mt12" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+    <div class="card" style="padding:16px 14px"><div class="title" style="font-size:15px">Workouts</div><div class="big" style="margin-top:8px;font-size:24px">${cur.workouts}</div><div class="sub" style="margin-top:2px">${dcap(cur.workouts, prev.workouts)}</div></div>
+    <div class="card" style="padding:16px 14px"><div class="title" style="font-size:15px">Volume</div><div class="big" style="margin-top:8px;font-size:24px">${fmtVol(cur.vol)} <small>kg</small></div><div class="sub" style="margin-top:2px">${dcap(cur.vol, prev.vol)}</div></div>
+    <div class="card" style="padding:16px 14px"><div class="title" style="font-size:15px">Sets</div><div class="big" style="margin-top:8px;font-size:24px">${cur.sets}</div><div class="sub" style="margin-top:2px">${dcap(cur.sets, prev.sets)}</div></div>
+    <div class="card" style="padding:16px 14px"><div class="title" style="font-size:15px">Heaviest</div><div class="big" style="margin-top:8px;font-size:24px">${cur.heaviest || '—'} <small>${cur.heaviest ? 'kg' : ''}</small></div><div class="sub" style="margin-top:2px">${dcap(cur.heaviest, prev.heaviest)}</div></div>
+  </div>
+  <div class="mtauto">${tabbar('progress')}</div>`;
 }
 
 function viewSync() {
@@ -572,7 +666,7 @@ function viewExEdit() {
 }
 
 function render() {
-  const views = { home: viewHome, workout: viewWorkout, history: viewHistory, log: viewLog, groups: viewGroups, exercises: viewExercises, exedit: viewExEdit, sync: viewSync };
+  const views = { home: viewHome, workout: viewWorkout, history: viewHistory, log: viewLog, groups: viewGroups, exercises: viewExercises, exedit: viewExEdit, sync: viewSync, progress: viewProgress };
   document.getElementById('app').innerHTML = (views[ui.view] || viewHome)();
 }
 render();
