@@ -88,18 +88,33 @@ function normEx(list) {
     .map(e => { const gs = GROUPS.filter(g => e.groups.includes(g)); return { name: e.name, groups: gs.length ? gs : [GROUPS[0]], group: (gs.length ? gs : [GROUPS[0]]).join(' · ') }; });
 }
 
-let sessions = load('wt.sessions', []);
+function withIds(list) {
+  (list || []).forEach(s => {
+    if (!s.id) s.id = 'legacy-' + s.date + '-' + (s.sets ? s.sets.length : 0);
+    if (!s.mt) s.mt = s.date;
+  });
+  return list || [];
+}
+
+let sessions = withIds(load('wt.sessions', []));
 let EX = normEx(load('wt.exercises', SEED_EX));
 if (!EX.length) EX = normEx(SEED_EX);
+let exTs = load('wt.exts', 0);
+let tombs = load('wt.tombs', []);
+let sync = load('wt.sync', null) || {};
+sync = { url: sync.url || '', key: sync.key || '', last: sync.last || 0 };
 let draft = load('wt.today', null) || {};
 draft = { sets: draft.sets || [], exIdx: draft.exIdx || 0, kg: draft.kg ?? null, reps: draft.reps ?? null, startedAt: draft.startedAt || null };
 if (draft.exIdx >= EX.length) draft.exIdx = 0;
 let weightStep = load('wt.step', 2.5);
-let ui = { view: 'home', period: 'week', groupSel: 'Glutes', logIdx: null, editing: null };
+let ui = { view: 'home', period: 'week', groupSel: 'Glutes', logIdx: null, editing: null, showKey: false, syncBusy: false };
 
 function persist() {
   localStorage.setItem('wt.sessions', JSON.stringify(sessions));
   localStorage.setItem('wt.exercises', JSON.stringify(EX.map(e => ({ name: e.name, groups: e.groups }))));
+  localStorage.setItem('wt.exts', JSON.stringify(exTs));
+  localStorage.setItem('wt.tombs', JSON.stringify(tombs));
+  localStorage.setItem('wt.sync', JSON.stringify(sync));
   localStorage.setItem('wt.today', JSON.stringify(draft));
   localStorage.setItem('wt.step', JSON.stringify(weightStep));
 }
@@ -142,6 +157,75 @@ function switchEx(idx) {
   draft.reps = lastToday ? lastToday.reps : d.reps;
 }
 
+// ── sync (end-to-end encrypted) ──────────────────────────
+// The sync key never leaves the device. Storage id, auth token, and the
+// AES key are independent one-way derivations of it, so the server sees
+// only ciphertext under an unlinkable id.
+const hexOf = b => [...b].map(x => x.toString(16).padStart(2, '0')).join('');
+function b64Of(b) { let s = ''; for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000)); return btoa(s); }
+const unb64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+async function skd(label) { return new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode('wt-sync:' + label + ':' + sync.key))); }
+async function syncCtx() {
+  return {
+    id: hexOf(await skd('id')),
+    auth: hexOf(await skd('auth')),
+    aes: await crypto.subtle.importKey('raw', await skd('enc'), 'AES-GCM', false, ['encrypt', 'decrypt'])
+  };
+}
+async function encPayload(obj, aes) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, aes, new TextEncoder().encode(JSON.stringify(obj))));
+  return b64Of(iv) + '.' + b64Of(ct);
+}
+async function decPayload(s, aes) {
+  const [i, c] = s.split('.');
+  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(i) }, aes, unb64(c));
+  return JSON.parse(new TextDecoder().decode(pt));
+}
+function newSyncKey() {
+  const AL = 'ABCDEFGHJKMNPQRSTVWXYZ23456789'; // no easily-confused chars
+  const b = crypto.getRandomValues(new Uint8Array(32));
+  let k = '';
+  for (let i = 0; i < 32; i++) { k += AL[b[i] % AL.length]; if (i % 4 === 3 && i < 31) k += '-'; }
+  return k;
+}
+function mergeRemote(remote) {
+  tombs = [...new Set([...tombs, ...(Array.isArray(remote.tombstones) ? remote.tombstones : [])])].slice(-1000);
+  const map = new Map();
+  sessions.forEach(s => map.set(s.id, s));
+  withIds(Array.isArray(remote.sessions) ? remote.sessions : []).forEach(s => {
+    const cur = map.get(s.id);
+    if (!cur || (s.mt || 0) > (cur.mt || 0)) map.set(s.id, s);
+  });
+  sessions = [...map.values()].filter(s => !tombs.includes(s.id)).sort((a, b) => a.date - b.date);
+  if ((remote.exTs || 0) > exTs && Array.isArray(remote.exercises)) {
+    const im = normEx(remote.exercises);
+    if (im.length) { EX = im; exTs = remote.exTs; if (draft.exIdx >= EX.length) draft.exIdx = 0; }
+  }
+}
+async function doSync(showErrors) {
+  if (!sync.url || !sync.key || ui.syncBusy) return;
+  ui.syncBusy = true;
+  let pulled = false;
+  try {
+    const ctx = await syncCtx();
+    const base = sync.url.replace(/\/+$/, '');
+    const r = await fetch(base + '/v1/blob/' + ctx.id, { headers: { 'X-Sync-Auth': ctx.auth } });
+    if (r.status === 200) { mergeRemote(await decPayload(await r.text(), ctx.aes)); pulled = true; }
+    else if (r.status !== 404) throw new Error('server replied ' + r.status);
+    const payload = await encPayload({ v: 1, sessions, exercises: EX.map(e => ({ name: e.name, groups: e.groups })), tombstones: tombs, exTs }, ctx.aes);
+    const w = await fetch(base + '/v1/blob/' + ctx.id, { method: 'PUT', headers: { 'X-Sync-Auth': ctx.auth, 'Content-Type': 'text/plain' }, body: payload });
+    if (!w.ok) throw new Error('upload failed (' + w.status + ')');
+    sync.last = Date.now();
+    persist(); render();
+    return pulled ? 'pulled' : 'fresh';
+  } catch (e) {
+    if (showErrors) alert('Sync failed: ' + e.message + '\nCheck the server URL, your connection, and that the key matches.');
+    return 'error';
+  } finally { ui.syncBusy = false; if (ui.view === 'sync') render(); }
+}
+const syncSoon = (() => { let t; return () => { if (!sync.url || !sync.key) return; clearTimeout(t); t = setTimeout(() => doSync(false), 1500); }; })();
+
 // ── actions ──────────────────────────────────────────────
 const A = {
   go(v) { ui.view = v; render(); },
@@ -171,9 +255,10 @@ const A = {
   nextEx() { if (draft.exIdx >= EX.length - 1) return; switchEx(draft.exIdx + 1); persist(); render(); },
   finish() {
     if (draft.sets.length) {
-      sessions.push({ date: draft.startedAt || Date.now(), sets: draft.sets });
+      const now = Date.now();
+      sessions.push({ id: now + '-' + Math.random().toString(36).slice(2, 8), date: draft.startedAt || now, mt: now, sets: draft.sets });
       draft = { sets: [], exIdx: 0, kg: null, reps: null, startedAt: null };
-      persist();
+      persist(); syncSoon();
     }
     ui.view = 'home'; render();
   },
@@ -215,11 +300,13 @@ const A = {
       EX[ed.idx] = { name, groups, group: groups.join(' · ') };
       if (old !== name) {
         // rename follows through history so "last time" lookups keep working
-        sessions.forEach(s => s.sets.forEach(x => { if (x.ex === old) x.ex = name; }));
+        const now = Date.now();
+        sessions.forEach(s => { if (s.sets.some(x => x.ex === old)) { s.sets.forEach(x => { if (x.ex === old) x.ex = name; }); s.mt = now; } });
         draft.sets.forEach(x => { if (x.ex === old) x.ex = name; });
       }
     }
-    ui.editing = null; persist(); ui.view = 'exercises'; render();
+    exTs = Date.now();
+    ui.editing = null; persist(); syncSoon(); ui.view = 'exercises'; render();
   },
   deleteExercise() {
     const ed = ui.editing;
@@ -229,7 +316,8 @@ const A = {
     if (!confirm('Remove "' + name + '" from your exercise list?' + (logged ? ' Past workouts keep their ' + logged + ' logged set(s).' : ''))) return;
     EX.splice(ed.idx, 1);
     if (draft.exIdx >= EX.length) draft.exIdx = EX.length - 1;
-    ui.editing = null; persist(); ui.view = 'exercises'; render();
+    exTs = Date.now();
+    ui.editing = null; persist(); syncSoon(); ui.view = 'exercises'; render();
   },
   exportData() {
     const blob = new Blob([JSON.stringify({ sessions, exercises: EX.map(e => ({ name: e.name, groups: e.groups })) }, null, 2)], { type: 'application/json' });
@@ -244,14 +332,55 @@ const A = {
     const s = sessions[ui.logIdx];
     if (!s) return;
     if (!confirm('Delete the workout from ' + fmtDate(s.date) + ' (' + s.sets.length + ' sets)? This cannot be undone.')) return;
+    tombs = [...tombs, s.id].slice(-1000);
     sessions.splice(ui.logIdx, 1);
-    ui.logIdx = null; persist(); ui.view = 'history'; render();
+    ui.logIdx = null; persist(); syncSoon(); ui.view = 'history'; render();
   },
   deleteAllHistory() {
     if (!sessions.length) { alert('No history to delete.'); return; }
     if (!confirm('Delete ALL history (' + sessions.length + ' workouts)? Consider Export first — this cannot be undone.')) return;
     if (!confirm('Really delete everything? Last chance.')) return;
+    tombs = [...tombs, ...sessions.map(s => s.id)].slice(-1000);
     sessions = [];
+    persist(); syncSoon(); render();
+  },
+  readSyncUrl() {
+    const u = (document.getElementById('syncUrl')?.value || sync.url).trim().replace(/\/+$/, '');
+    if (u && !/^https?:\/\//.test(u)) { alert('The server URL must start with https:// (or http://localhost for testing).'); return null; }
+    sync.url = u; return u;
+  },
+  createKey() {
+    if (A.readSyncUrl() === null) return;
+    if (!sync.url) { alert('Enter your sync server URL first.'); return; }
+    sync.key = newSyncKey(); sync.last = 0;
+    ui.showKey = true; persist(); render();
+    doSync(true);
+  },
+  useKey() {
+    if (A.readSyncUrl() === null) return;
+    if (!sync.url) { alert('Enter your sync server URL first.'); return; }
+    const k = (document.getElementById('syncKeyIn').value || '').toUpperCase().replace(/[^A-Z2-9]/g, '');
+    if (k.length < 20) { alert('That does not look like a sync key.'); return; }
+    sync.key = k.replace(/(.{4})(?=.)/g, '$1-'); sync.last = 0;
+    ui.showKey = false; persist(); render();
+    doSync(true).then(st => {
+      if (st === 'fresh') alert('Connected — but the server had no existing data for this key. If you expected your history to appear, double-check the key for typos (Forget on this device, then re-enter it).');
+    });
+  },
+  syncNow() {
+    if (A.readSyncUrl() === null) return;
+    persist(); render();
+    doSync(true);
+  },
+  toggleKey() { ui.showKey = !ui.showKey; render(); },
+  copyKey() {
+    const done = () => alert('Sync key copied. Store it somewhere safe — it is the only way to access your synced data.');
+    if (navigator.clipboard?.writeText) navigator.clipboard.writeText(sync.key).then(done, () => prompt('Copy your sync key:', sync.key));
+    else prompt('Copy your sync key:', sync.key);
+  },
+  forgetKey() {
+    if (!confirm('Forget the sync key on this device? Your data stays here and on the server; reconnect any time with the same key.')) return;
+    sync.key = ''; sync.last = 0; ui.showKey = false;
     persist(); render();
   }
 };
@@ -266,20 +395,42 @@ document.getElementById('importFile').addEventListener('change', function () {
     const ok = data && Array.isArray(data.sessions) && data.sessions.every(s => s && typeof s.date === 'number' && Array.isArray(s.sets));
     if (!ok) { alert('Not a valid workout export file.'); return; }
     if (!confirm('Replace current data with ' + data.sessions.length + ' imported session(s)? Your current history will be overwritten.')) return;
-    sessions = data.sessions;
+    sessions = withIds(data.sessions);
     if (Array.isArray(data.exercises)) {
       const imported = normEx(data.exercises);
-      if (imported.length) { EX = imported; draft.exIdx = 0; }
+      if (imported.length) { EX = imported; exTs = Date.now(); draft.exIdx = 0; }
     }
-    persist(); render();
+    persist(); syncSoon(); render();
   };
   rd.readAsText(f);
 });
 
 // ── views ────────────────────────────────────────────────
 function tabbar(active) {
-  return '<div class="tabbar">' + [['home', 'Home'], ['history', 'History'], ['groups', 'Groups']].map(([v, l]) =>
+  return '<div class="tabbar">' + [['home', 'Home'], ['history', 'History'], ['groups', 'Groups'], ['sync', 'Sync']].map(([v, l]) =>
     `<span class="tab ${v === active ? 'tabon' : ''}" onclick="A.go('${v}')">${l}</span>`).join('') + '</div>';
+}
+
+function viewSync() {
+  const urlCard = `<div class="card"><div class="sethead">Server URL</div><input id="syncUrl" class="txt" type="url" value="${esc(sync.url)}" placeholder="https://sync.your-domain.com" autocomplete="off"></div>`;
+  if (!sync.key) {
+    return `
+  <div class="hpad"><div class="h1">Sync</div><div class="sub" style="margin-top:4px">Back up and share your data between devices — end-to-end encrypted with a private key that never leaves your devices.</div></div>
+  ${urlCard}
+  <div class="card mt12"><div class="sethead">Already have a key?</div><input id="syncKeyIn" class="txt" type="text" value="" placeholder="XXXX-XXXX-XXXX-…" autocomplete="off" style="margin-bottom:10px"><div class="gpill" style="text-align:center" onclick="A.useKey()">Connect with this key</div></div>
+  <div class="mtauto col g10"><div class="pill" onclick="A.createKey()">Create new sync key</div>${tabbar('sync')}</div>`;
+  }
+  const masked = ui.showKey ? sync.key : '••••-••••-••••-' + sync.key.slice(-4);
+  const last = sync.last ? fmtDate(sync.last) + ', ' + new Date(sync.last).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : 'never';
+  return `
+  <div class="hpad"><div class="h1">Sync</div><div class="sub" style="margin-top:4px">Last synced: ${last}</div></div>
+  ${urlCard}
+  <div class="card mt12"><div class="sethead">Sync key · keep it safe</div>
+    <div class="sub" style="color:#16171C;font-weight:800;font-size:15px;letter-spacing:.04em;font-variant-numeric:tabular-nums;word-break:break-all;padding:4px 0">${esc(masked)}</div>
+    <div class="fx" style="gap:16px;margin-top:8px"><span class="linkbtn" onclick="A.copyKey()">Copy</span><span class="linkbtn grey" onclick="A.toggleKey()">${ui.showKey ? 'Hide' : 'Show'}</span><span class="linkbtn grey" onclick="A.forgetKey()">Forget on this device</span></div>
+  </div>
+  <div class="card mt12"><div class="sub">Enter the same key on another device to merge your history there. Deletes sync too. Losing the key only loses the server copy — this device keeps its data.</div></div>
+  <div class="mtauto col g10"><div class="pill" onclick="A.syncNow()">${ui.syncBusy ? 'Syncing…' : 'Sync now'}</div>${tabbar('sync')}</div>`;
 }
 
 function viewHome() {
@@ -421,10 +572,11 @@ function viewExEdit() {
 }
 
 function render() {
-  const views = { home: viewHome, workout: viewWorkout, history: viewHistory, log: viewLog, groups: viewGroups, exercises: viewExercises, exedit: viewExEdit };
+  const views = { home: viewHome, workout: viewWorkout, history: viewHistory, log: viewLog, groups: viewGroups, exercises: viewExercises, exedit: viewExEdit, sync: viewSync };
   document.getElementById('app').innerHTML = (views[ui.view] || viewHome)();
 }
 render();
+if (sync.url && sync.key) doSync(false);
 
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   navigator.serviceWorker.register('./sw.js').catch(() => {});

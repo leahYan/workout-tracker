@@ -12,6 +12,7 @@ A minimal personal workout tracker PWA. Log sets (kg × reps) per exercise durin
 - **Resumable drafts** — an in-progress workout survives closing the app; Discard abandons it, Finish saves it (dated by when the first set was logged).
 - **Offline-first PWA** — service worker caches the app, so it opens with no signal. Add to home screen on Android/iOS for a full-screen app.
 - **Export / Import** — all data lives in the browser's localStorage on your device; History → Export downloads a JSON backup, Import restores it.
+- **Optional end-to-end-encrypted sync** — the Sync tab generates a private key; devices holding the same key merge their history through a tiny self-hosted server ([server/](server/)). Data is AES-GCM-encrypted on-device before upload, so the server only ever stores ciphertext. Deletes propagate via tombstones. No key, no sync — the app stays fully local by default.
 
 ## Structure
 
@@ -19,4 +20,4 @@ Everything is one dependency-free file: [`index.html`](index.html). `sw.js` + `m
 
 ## Data
 
-Stored locally per browser/origin under localStorage keys `wt.sessions`, `wt.today`, `wt.step`. Nothing leaves the device. Export a backup occasionally.
+Stored locally per browser/origin under localStorage keys `wt.sessions`, `wt.exercises`, `wt.today`, `wt.step`, `wt.tombs`, `wt.sync`. Nothing leaves the device unless you set up sync — and even then only ciphertext does. Export a backup occasionally.
