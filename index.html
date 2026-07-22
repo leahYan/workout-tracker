@@ -57,6 +57,9 @@ body{margin:0;background:#DDDEE6;font-family:system-ui,-apple-system,'Segoe UI',
 .segon{background:#fff;color:#16171C}
 .stepseg{display:flex;justify-content:center;gap:6px;margin-top:14px}
 .txt{width:100%;box-sizing:border-box;border:0;background:#F2F2F6;border-radius:14px;padding:14px 16px;font-size:16px;font-weight:800;font-family:inherit;color:#16171C;outline:none}
+.kgin{border:0;background:transparent;font-family:inherit;font-weight:800;font-size:44px;letter-spacing:-.02em;font-variant-numeric:tabular-nums;color:#16171C;width:130px;text-align:center;outline:none;padding:0;border-radius:10px}
+.kgin:focus{background:#F2F2F6}
+.kgin::-webkit-outer-spin-button,.kgin::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
 .gtog{border-radius:999px;font-weight:800;font-size:13px;padding:10px 16px;cursor:pointer;user-select:none;background:#F2F2F6;color:#9A9CA6}
 .gtog.on{background:#EEE9FB;color:#6F58B8}
 .stepopt{font-weight:800;font-size:11px;color:#C0C2CC;padding:6px 10px;border-radius:999px;cursor:pointer;user-select:none}
@@ -108,7 +111,7 @@ draft = { sets: draft.sets || [], exIdx: draft.exIdx || 0, kg: draft.kg ?? null,
 if (draft.exIdx >= EX.length) draft.exIdx = 0;
 let weightStep = load('wt.step', 2.5);
 let restSec = load('wt.rest', 90); // 0 = timer off
-let ui = { view: 'home', period: 'week', groupSel: 'Glutes', logIdx: null, editing: null, showKey: false, syncBusy: false, progMetric: 'vol', progSel: null };
+let ui = { view: 'home', period: 'week', groupSel: 'Glutes', logIdx: null, editing: null, showKey: false, syncBusy: false, progMetric: 'vol', progSel: null, pickGroup: 'Glutes' };
 
 function persist() {
   localStorage.setItem('wt.sessions', JSON.stringify(sessions));
@@ -274,7 +277,21 @@ const A = {
   setPeriod(p) { ui.period = p; render(); },
   openLog(i) { ui.logIdx = i; ui.view = 'log'; render(); },
   selectGroup(g) { ui.groupSel = g; render(); },
-  startWorkout() { switchEx(draft.exIdx); persist(); ui.view = 'workout'; render(); },
+  startWorkout() {
+    if (draft.sets.length) { switchEx(draft.exIdx); persist(); ui.view = 'workout'; } // resume where you were
+    else ui.view = 'pick';
+    render();
+  },
+  openPicker() { ui.view = 'pick'; render(); },
+  pickGroup(g) { ui.pickGroup = g; render(); },
+  pickEx(i) { switchEx(i); persist(); ui.view = 'workout'; render(); },
+  kgType(v) {
+    const n = parseFloat(String(v).replace(',', '.'));
+    const c = currentKgReps();
+    draft.kg = isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : c.kg;
+    draft.reps = c.reps;
+    persist(); render();
+  },
   setStep(s) { weightStep = s; persist(); render(); },
   kgStep(d) { const c = currentKgReps(); draft.kg = Math.max(0, Math.round((c.kg + d * weightStep) * 100) / 100); draft.reps = c.reps; persist(); render(); },
   repsStep(d) { const c = currentKgReps(); draft.reps = Math.max(1, c.reps + d); draft.kg = c.kg; persist(); render(); },
@@ -637,6 +654,22 @@ function restCard() {
   return `<div class="card mt12 fx jb" style="padding:14px 18px;background:#6F58B8"><span style="color:#fff;font-weight:800;font-size:15px">Rest over — go!</span><span class="linkbtn" style="color:#fff" onclick="A.skipRest()">Dismiss</span></div>`;
 }
 
+function viewPick() {
+  const tabs = GROUPS.map(g => `<div class="segbtn ${g === ui.pickGroup ? 'segon' : ''}" onclick="A.pickGroup('${g}')">${g}</div>`).join('');
+  const rows = EX.map((e, i) => ({ e, i })).filter(x => x.e.groups.includes(ui.pickGroup)).map(({ e, i }) => {
+    const last = lastSetsFor(e.name);
+    const info = last ? 'last ' + fmtShort(last.date) + ' · ' + last.sets[0].kg + '×' + last.sets[0].reps : 'first time';
+    const doneToday = draft.sets.filter(s => s.ex === e.name).length;
+    return `<div class="row" onclick="A.pickEx(${i})" style="cursor:pointer"><div><div class="title" style="font-size:15px">${esc(e.name)}</div><div class="sub">${info}</div></div>${doneToday ? `<span class="chip">${doneToday} sets</span>` : '<span class="sub" style="font-weight:800">›</span>'}</div>`;
+  }).join('');
+  const body = rows || '<div class="sub" style="padding:8px 0">No exercises in this group yet — add one under Groups → Edit exercises.</div>';
+  return `
+  <div class="fx jb" style="padding:0 6px"><span class="linkbtn" onclick="A.go('${draft.sets.length ? 'workout' : 'home'}')">‹ ${draft.sets.length ? 'Back' : 'Home'}</span></div>
+  <div class="hpad" style="padding-top:14px"><div class="h1">Pick an exercise</div><div class="sub" style="margin-top:4px">Muscle group, then exercise</div></div>
+  <div class="seg">${tabs}</div>
+  <div class="card mt12 scroll">${body}</div>`;
+}
+
 function viewWorkout() {
   const ex = EX[draft.exIdx];
   const c = currentKgReps();
@@ -651,11 +684,11 @@ function viewWorkout() {
   const stepOpts = [1.25, 2.5, 5].map(s => `<span class="stepopt ${s === weightStep ? 'on' : ''}" onclick="A.setStep(${s})">±${s}</span>`).join('');
   return `
   <div class="fx jb" style="padding:0 6px"><span class="linkbtn" onclick="A.go('home')">‹ Home</span><span class="fx" style="gap:16px"><span class="linkbtn grey" onclick="A.discard()">Discard</span><span class="linkbtn" onclick="A.finish()">Finish</span></span></div>
-  <div class="hpad" style="padding-top:14px"><div class="h1">${esc(ex.name)}</div><div class="sub" style="margin-top:4px">${esc(ex.group)} · set ${todayForEx.length + 1} · exercise ${draft.exIdx + 1} of ${EX.length}</div></div>
+  <div class="hpad" style="padding-top:14px"><div class="h1">${esc(ex.name)}</div><div class="sub" style="margin-top:4px">${esc(ex.group)} · set ${todayForEx.length + 1} · <span class="linkbtn" style="font-size:12px" onclick="A.openPicker()">Switch exercise</span></div></div>
   <div class="card" style="padding:20px 18px">
     <div class="fx jb">
       <div class="step" onclick="A.kgStep(-1)">−</div>
-      <div class="tc"><div class="big" style="font-size:44px">${c.kg} <small>kg</small></div>
+      <div class="tc"><div class="fx" style="justify-content:center"><input id="kgIn" class="kgin" type="number" inputmode="decimal" min="0" step="0.25" value="${c.kg}" onchange="A.kgType(this.value)" onfocus="this.select()"><small style="font-weight:400;font-size:15px;color:#B3B5BF">kg</small></div>
       <div class="fx" style="gap:14px;justify-content:center;margin-top:10px"><div class="step stepsm" onclick="A.repsStep(-1)">−</div><div class="sub" style="color:#16171C;font-weight:800;font-size:15px;min-width:64px;text-align:center">× ${c.reps} reps</div><div class="step stepsm" onclick="A.repsStep(1)">+</div></div></div>
       <div class="step" onclick="A.kgStep(1)">+</div>
     </div>
@@ -744,7 +777,7 @@ function viewExEdit() {
 }
 
 function render() {
-  const views = { home: viewHome, workout: viewWorkout, history: viewHistory, log: viewLog, groups: viewGroups, exercises: viewExercises, exedit: viewExEdit, sync: viewSync, progress: viewProgress, settings: viewSettings };
+  const views = { home: viewHome, workout: viewWorkout, history: viewHistory, log: viewLog, groups: viewGroups, exercises: viewExercises, exedit: viewExEdit, sync: viewSync, progress: viewProgress, settings: viewSettings, pick: viewPick };
   document.getElementById('app').innerHTML = (views[ui.view] || viewHome)();
 }
 render();
