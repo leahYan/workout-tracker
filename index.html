@@ -30,6 +30,8 @@ body{margin:0;background:#DDDEE6;font-family:system-ui,-apple-system,'Segoe UI',
 .stepsm{width:38px;height:38px;font-size:16px}
 .rm{width:28px;height:28px;border-radius:999px;background:#F2F2F6;color:#9A9CA6;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:14px;cursor:pointer;user-select:none;flex-shrink:0}
 .rm:active{background:#E4E4EC}
+.ck{width:26px;height:26px;border-radius:999px;border:2px solid #E4E4EC;color:transparent;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;flex-shrink:0;box-sizing:border-box}
+.ck.on{background:#6F58B8;border-color:#6F58B8;color:#fff}
 .row{display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid #F0F0F4}
 .row:last-child{border-bottom:0}
 .sethead{font-weight:800;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:#C0C2CC;padding-bottom:6px}
@@ -107,8 +109,11 @@ let tombs = load('wt.tombs', []);
 let sync = load('wt.sync', null) || {};
 sync = { url: sync.url || '', key: sync.key || '', last: sync.last || 0 };
 let draft = load('wt.today', null) || {};
-draft = { sets: draft.sets || [], exIdx: draft.exIdx || 0, kg: draft.kg ?? null, reps: draft.reps ?? null, startedAt: draft.startedAt || null, restUntil: draft.restUntil || null };
-if (draft.exIdx >= EX.length) draft.exIdx = 0;
+draft = { sets: draft.sets || [], exIdx: draft.exIdx || 0, kg: draft.kg ?? null, reps: draft.reps ?? null, startedAt: draft.startedAt || null, restUntil: draft.restUntil || null, plan: draft.plan };
+// today's plan: the exercises chosen for this workout (names, in EX order)
+if (Array.isArray(draft.plan)) draft.plan = draft.plan.filter(n => EX.some(e => e.name === n));
+else draft.plan = draft.sets.length ? EX.map(e => e.name) : []; // migrate an old-shape in-progress draft
+if (draft.exIdx >= draft.plan.length) draft.exIdx = 0;
 let weightStep = load('wt.step', 2.5);
 let restSec = load('wt.rest', 90); // 0 = timer off
 let ui = { view: 'home', period: 'week', groupSel: 'Glutes', logIdx: null, editing: null, showKey: false, syncBusy: false, progMetric: 'vol', progSel: null, pickGroup: 'Glutes' };
@@ -183,8 +188,9 @@ function defaultsFor(name) {
   const last = lastSetsFor(name);
   return { kg: last ? last.sets[0].kg : 20, reps: last ? last.sets[0].reps : 10 };
 }
+function planEx() { return exOf(draft.plan[draft.exIdx]) || EX[0]; }
 function currentKgReps() {
-  const d = defaultsFor(EX[draft.exIdx].name);
+  const d = defaultsFor(planEx().name);
   return { kg: draft.kg ?? d.kg, reps: draft.reps ?? d.reps };
 }
 function sessionGroups(sess) {
@@ -193,10 +199,12 @@ function sessionGroups(sess) {
   return gs.join(' · ') || '—';
 }
 function switchEx(idx) {
-  idx = Math.max(0, Math.min(EX.length - 1, idx));
-  const t = draft.sets.filter(s => s.ex === EX[idx].name);
+  if (!draft.plan.length) return;
+  idx = Math.max(0, Math.min(draft.plan.length - 1, idx));
+  const name = draft.plan[idx];
+  const t = draft.sets.filter(s => s.ex === name);
   const lastToday = t[t.length - 1];
-  const d = defaultsFor(EX[idx].name);
+  const d = defaultsFor(name);
   draft.exIdx = idx;
   draft.kg = lastToday ? lastToday.kg : d.kg;
   draft.reps = lastToday ? lastToday.reps : d.reps;
@@ -278,13 +286,25 @@ const A = {
   openLog(i) { ui.logIdx = i; ui.view = 'log'; render(); },
   selectGroup(g) { ui.groupSel = g; render(); },
   startWorkout() {
-    if (draft.sets.length) { switchEx(draft.exIdx); persist(); ui.view = 'workout'; } // resume where you were
+    if (draft.sets.length && draft.plan.length) { switchEx(draft.exIdx); persist(); ui.view = 'workout'; } // resume where you were
     else ui.view = 'pick';
     render();
   },
   openPicker() { ui.view = 'pick'; render(); },
   pickGroup(g) { ui.pickGroup = g; render(); },
-  pickEx(i) { switchEx(i); persist(); ui.view = 'workout'; render(); },
+  togglePlan(i) {
+    const name = EX[i].name;
+    const cur = draft.plan[draft.exIdx];
+    if (draft.plan.includes(name)) draft.plan = draft.plan.filter(n => n !== name);
+    else draft.plan = EX.map(e => e.name).filter(n => draft.plan.includes(n) || n === name); // keep EX order
+    draft.exIdx = Math.max(0, draft.plan.indexOf(cur));
+    persist(); render();
+  },
+  startPlanned() {
+    if (!draft.plan.length) { alert('Select at least one exercise for today.'); return; }
+    switchEx(draft.exIdx);
+    persist(); ui.view = 'workout'; render();
+  },
   kgType(v) {
     const n = parseFloat(String(v).replace(',', '.'));
     const c = currentKgReps();
@@ -298,7 +318,7 @@ const A = {
   copySet(kg, reps) { draft.kg = kg; draft.reps = reps; persist(); render(); },
   logSet() {
     const c = currentKgReps();
-    draft.sets.push({ ex: EX[draft.exIdx].name, kg: c.kg, reps: c.reps });
+    draft.sets.push({ ex: planEx().name, kg: c.kg, reps: c.reps });
     if (!draft.startedAt) draft.startedAt = Date.now();
     if (restSec > 0) {
       primeAudio();
@@ -311,7 +331,7 @@ const A = {
   skipRest() { draft.restUntil = null; restNotified = false; persist(); render(); },
   restStep(d) { restSec = Math.max(0, Math.min(600, restSec + d * 15)); persist(); render(); },
   removeSet(i) {
-    const name = EX[draft.exIdx].name;
+    const name = planEx().name;
     let seen = -1;
     for (let j = 0; j < draft.sets.length; j++) {
       if (draft.sets[j].ex === name) { seen++; if (seen === i) { draft.sets.splice(j, 1); break; } }
@@ -319,7 +339,7 @@ const A = {
     persist(); render();
   },
   prevEx() { switchEx(draft.exIdx - 1); persist(); render(); },
-  nextEx() { if (draft.exIdx >= EX.length - 1) return; switchEx(draft.exIdx + 1); persist(); render(); },
+  nextEx() { if (draft.exIdx >= draft.plan.length - 1) return; switchEx(draft.exIdx + 1); persist(); render(); },
   finish() {
     if (draft.sets.length) {
       const now = Date.now();
@@ -382,7 +402,8 @@ const A = {
     const logged = sessions.reduce((a, s) => a + s.sets.filter(x => x.ex === name).length, 0);
     if (!confirm('Remove "' + name + '" from your exercise list?' + (logged ? ' Past workouts keep their ' + logged + ' logged set(s).' : ''))) return;
     EX.splice(ed.idx, 1);
-    if (draft.exIdx >= EX.length) draft.exIdx = EX.length - 1;
+    draft.plan = draft.plan.filter(n => n !== name);
+    if (draft.exIdx >= draft.plan.length) draft.exIdx = 0;
     exTs = Date.now();
     ui.editing = null; persist(); syncSoon(); ui.view = 'exercises'; render();
   },
@@ -657,34 +678,50 @@ function restCard() {
 function viewPick() {
   const tabs = GROUPS.map(g => `<div class="segbtn ${g === ui.pickGroup ? 'segon' : ''}" onclick="A.pickGroup('${g}')">${g}</div>`).join('');
   const rows = EX.map((e, i) => ({ e, i })).filter(x => x.e.groups.includes(ui.pickGroup)).map(({ e, i }) => {
+    const on = draft.plan.includes(e.name);
     const last = lastSetsFor(e.name);
     const info = last ? 'last ' + fmtShort(last.date) + ' · ' + last.sets[0].kg + '×' + last.sets[0].reps : 'first time';
     const doneToday = draft.sets.filter(s => s.ex === e.name).length;
-    return `<div class="row" onclick="A.pickEx(${i})" style="cursor:pointer"><div><div class="title" style="font-size:15px">${esc(e.name)}</div><div class="sub">${info}</div></div>${doneToday ? `<span class="chip">${doneToday} sets</span>` : '<span class="sub" style="font-weight:800">›</span>'}</div>`;
+    return `<div class="row" onclick="A.togglePlan(${i})" style="cursor:pointer;gap:12px"><span class="ck ${on ? 'on' : ''}">✓</span><div style="flex:1"><div class="title" style="font-size:15px">${esc(e.name)}</div><div class="sub">${info}</div></div>${doneToday ? `<span class="chip">${doneToday} sets</span>` : ''}</div>`;
   }).join('');
   const body = rows || '<div class="sub" style="padding:8px 0">No exercises in this group yet — add one under Groups → Edit exercises.</div>';
+  const n = draft.plan.length;
+  const started = draft.sets.length > 0;
   return `
-  <div class="fx jb" style="padding:0 6px"><span class="linkbtn" onclick="A.go('${draft.sets.length ? 'workout' : 'home'}')">‹ ${draft.sets.length ? 'Back' : 'Home'}</span></div>
-  <div class="hpad" style="padding-top:14px"><div class="h1">Pick an exercise</div><div class="sub" style="margin-top:4px">Muscle group, then exercise</div></div>
+  <div class="fx jb" style="padding:0 6px"><span class="linkbtn" onclick="A.go('${started ? 'workout' : 'home'}')">‹ ${started ? 'Back' : 'Home'}</span></div>
+  <div class="hpad" style="padding-top:14px"><div class="h1">Today's workout</div><div class="sub" style="margin-top:4px">${n ? n + ' exercise' + (n === 1 ? '' : 's') + ' selected' : 'Pick the exercises for today'}</div></div>
   <div class="seg">${tabs}</div>
-  <div class="card mt12 scroll">${body}</div>`;
+  <div class="card mt12 scroll">${body}</div>
+  <div class="mtauto"><div class="pill" onclick="A.startPlanned()">${started ? 'Back to workout' : 'Start workout'}</div></div>`;
 }
 
 function viewWorkout() {
-  const ex = EX[draft.exIdx];
+  if (!draft.plan.length) { ui.view = 'pick'; return viewPick(); }
+  const ex = planEx();
   const c = currentKgReps();
   const last = lastSetsFor(ex.name);
   const todayForEx = draft.sets.filter(s => s.ex === ex.name);
-  const lastRows = last
-    ? last.sets.map(s => `<div class="row" onclick="A.copySet(${s.kg},${s.reps})" style="cursor:pointer"><span class="big ghost" style="font-size:19px">${s.kg} <small>kg</small></span><span class="sub">× ${s.reps}</span></div>`).join('')
-    : '<div class="sub" style="padding:8px 0">First time — no previous sets.</div>';
+  // show only the heaviest set and the most-reps set (one row if they coincide)
+  let lastRows;
+  if (last) {
+    let hi = 0, mr = 0;
+    last.sets.forEach((s, i) => { if (s.kg > last.sets[hi].kg) hi = i; if (s.reps > last.sets[mr].reps) mr = i; });
+    const same = hi === mr || (last.sets[hi].kg === last.sets[mr].kg && last.sets[hi].reps === last.sets[mr].reps);
+    const picks = same ? [[hi, 'best']] : [[hi, 'heaviest'], [mr, 'most reps']];
+    lastRows = picks.map(([i, tag]) => {
+      const s = last.sets[i];
+      return `<div class="row" onclick="A.copySet(${s.kg},${s.reps})" style="cursor:pointer"><span class="big ghost" style="font-size:19px">${s.kg} <small>kg</small></span><span class="fx g12"><span class="sub">× ${s.reps}</span><span class="sub" style="font-size:11px">${tag}</span></span></div>`;
+    }).join('');
+  } else {
+    lastRows = '<div class="sub" style="padding:8px 0">First time — no previous sets.</div>';
+  }
   const todayRows = todayForEx.length
     ? todayForEx.map((s, i) => `<div class="row"><span class="big" style="font-size:19px">${s.kg} <small>kg</small></span><span class="fx g12"><span class="sub" style="color:#16171C">× ${s.reps}</span><span class="setno">set ${i + 1}</span><span class="rm" onclick="A.removeSet(${i})">×</span></span></div>`).join('')
     : '<div class="sub" style="padding:8px 0">Nothing logged yet.</div>';
   const stepOpts = [1.25, 2.5, 5].map(s => `<span class="stepopt ${s === weightStep ? 'on' : ''}" onclick="A.setStep(${s})">±${s}</span>`).join('');
   return `
   <div class="fx jb" style="padding:0 6px"><span class="linkbtn" onclick="A.go('home')">‹ Home</span><span class="fx" style="gap:16px"><span class="linkbtn grey" onclick="A.discard()">Discard</span><span class="linkbtn" onclick="A.finish()">Finish</span></span></div>
-  <div class="hpad" style="padding-top:14px"><div class="h1">${esc(ex.name)}</div><div class="sub" style="margin-top:4px">${esc(ex.group)} · set ${todayForEx.length + 1} · <span class="linkbtn" style="font-size:12px" onclick="A.openPicker()">Switch exercise</span></div></div>
+  <div class="hpad" style="padding-top:14px"><div class="h1">${esc(ex.name)}</div><div class="sub" style="margin-top:4px">${esc(ex.group)} · set ${todayForEx.length + 1} · exercise ${draft.exIdx + 1} of ${draft.plan.length} · <span class="linkbtn" style="font-size:12px" onclick="A.openPicker()">Edit plan</span></div></div>
   <div class="card" style="padding:20px 18px">
     <div class="fx jb">
       <div class="step" onclick="A.kgStep(-1)">−</div>
@@ -699,7 +736,7 @@ function viewWorkout() {
   <div class="card mt12"><div class="sethead violet">Today</div>${todayRows}</div>
   <div class="mtauto col g10">
     <div class="pill" onclick="A.logSet()">Log set ${todayForEx.length + 1} — ${c.kg} kg × ${c.reps}</div>
-    <div class="fx g12"><div class="gpill" onclick="A.prevEx()">‹ Prev</div><div class="gpill" onclick="A.nextEx()">${draft.exIdx >= EX.length - 1 ? 'Last one' : 'Next ›'}</div></div>
+    <div class="fx g12"><div class="gpill" onclick="A.prevEx()">‹ Prev</div><div class="gpill" onclick="A.nextEx()">${draft.exIdx >= draft.plan.length - 1 ? 'Last one' : 'Next ›'}</div></div>
   </div>`;
 }
 
